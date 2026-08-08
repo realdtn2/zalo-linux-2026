@@ -1,8 +1,31 @@
 #!/usr/bin/env python3
-import os, json, shutil
+import os, json, shutil, sys, tempfile
 
-BUILD_DIR = "/tmp/db-cross-build"
-os.makedirs(BUILD_DIR, exist_ok=True)
+REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# SECURITY: a fixed /tmp path is world-writable and predictable, so another local user could
+# pre-seed node_modules/ or the build script we are about to execute. mkdtemp gives us a
+# 0700 directory with an unguessable name.
+BUILD_DIR = tempfile.mkdtemp(prefix="db-cross-build-")
+
+# Preflight: node-gyp's failure output for a missing header is long and unhelpful, so say it plainly.
+_MISSING = []
+if not any(os.path.exists(os.path.join(p, "lzma.h"))
+           for p in ["/usr/include", "/usr/local/include"] + os.environ.get("CPATH", "").split(os.pathsep)
+           if p):
+    _MISSING.append("liblzma-dev")
+if not any(os.path.exists(os.path.join(p, "openssl", "evp.h"))
+           for p in ["/usr/include", "/usr/local/include"] + os.environ.get("CPATH", "").split(os.pathsep)
+           if p):
+    _MISSING.append("libssl-dev")
+if _MISSING and os.environ.get("ZALO_SKIP_DEP_CHECK") != "1":
+    sys.exit("ERROR: missing build dependencies: %s\n"
+             "  Ubuntu/Debian: sudo apt-get install -y build-essential %s\n"
+             "  Fedora:        sudo dnf install -y gcc-c++ xz-devel openssl-devel\n"
+             "  Arch:          sudo pacman -S --needed base-devel xz openssl\n"
+             "If the headers are installed somewhere this check does not look, set CPATH,\n"
+             "or bypass the check entirely with ZALO_SKIP_DEP_CHECK=1."
+             % (", ".join(_MISSING), " ".join(_MISSING)))
 
 pkg = {
     "name": "db-cross-v4-linux",
@@ -10,7 +33,9 @@ pkg = {
     "description": "Linux reimplementation of Zalo db-cross-v4 backup decrypt addon",
     "main": "index.js",
     "scripts": {"build": "node-gyp configure build"},
-    "dependencies": {"node-addon-api": "^5.0.0", "node-gyp": "^10.0.0"}
+    # Exact versions, no ranges: the addon is a security-relevant binary, so what goes into it
+    # must be reproducible. See the notes next to the npm install in build.sh for why these two.
+    "dependencies": {"node-addon-api": "8.9.1", "node-gyp": "12.4.0"}
 }
 with open(f"{BUILD_DIR}/package.json", "w") as f: json.dump(pkg, f, indent=2)
 
@@ -164,6 +189,47 @@ static bool ensure_parent_dir(const fs::path& file_path, std::string& err) {
         err = e.what();
         return false;
     }
+}
+
+// SECURITY: entry names come out of the decrypted container, which is attacker-controllable
+// (a backup file can be crafted or swapped). Joining them onto the output directory without
+// checks allows "../../" traversal, and an absolute name would make operator/ discard the
+// base entirely -> arbitrary file write with the user's privileges. Validate before use.
+static bool safe_join_under(const fs::path& base, const std::string& raw_name,
+                            fs::path& out, std::string& err) {
+    if (raw_name.empty()) { err = "empty entry name"; return false; }
+    if (raw_name.find('\0') != std::string::npos) { err = "entry name contains NUL"; return false; }
+
+    fs::path rel(raw_name);
+    if (rel.is_absolute() || rel.has_root_name() || rel.has_root_directory()) {
+        err = "absolute entry name rejected: " + raw_name;
+        return false;
+    }
+    for (const auto& part : rel) {
+        if (part == "..") { err = "path traversal rejected: " + raw_name; return false; }
+    }
+
+    const fs::path base_norm = base.lexically_normal();
+    const fs::path candidate = (base_norm / rel).lexically_normal();
+    const fs::path rel_to_base = candidate.lexically_relative(base_norm);
+    if (rel_to_base.empty() || *rel_to_base.begin() == "..") {
+        err = "entry escapes output directory: " + raw_name;
+        return false;
+    }
+
+    // Refuse to write through an existing symlink (including a symlinked parent component).
+    fs::path walk = base_norm;
+    for (const auto& part : rel_to_base) {
+        walk /= part;
+        std::error_code ec;
+        if (fs::is_symlink(walk, ec)) {
+            err = "symlinked path component rejected: " + raw_name;
+            return false;
+        }
+    }
+
+    out = candidate;
+    return true;
 }
 
 struct DecryptResult { int code; std::string err; };
@@ -699,7 +765,13 @@ static DecryptResult process_zdb4_v2(
 
         // NOTE: container layout is inferred; keep existing offsets but validate bounds thoroughly.
         size_t off = 14;
+        // The magic check only guarantees 6 bytes; reading the count at 14 needs 18.
+        if (pt.size() < off + 4) return {-2, "Truncated container header"};
         uint32_t file_count = read_u32_be(pt.data() + off); off += 4;
+
+        // Each table entry costs at least 8 bytes (4 name length + 4 size), so a count larger
+        // than that cannot be honest. Bail out early instead of looping on a bogus 4G value.
+        if (file_count > (pt.size() - off) / 8) return {-2, "Implausible file count"};
 
         std::vector<FileEntry> files;
         for(uint32_t i = 0; i < file_count; i++) {
@@ -730,8 +802,9 @@ static DecryptResult process_zdb4_v2(
         std::ofstream current_out;
 
         if (!files.empty()) {
-            fs::path out_path = fs::path(output_path) / fs::path(files[file_idx].name);
+            fs::path out_path;
             std::string err;
+            if (!safe_join_under(output_path, files[file_idx].name, out_path, err)) return {-16, "Unsafe entry name: " + err};
             if (!ensure_parent_dir(out_path, err)) return {-10, "Failed to create output directories: " + err};
             current_out.open(out_path, std::ios::binary);
             if (!current_out.is_open()) return {-11, "Failed to open output file: " + out_path.string()};
@@ -769,8 +842,9 @@ static DecryptResult process_zdb4_v2(
                     bytes_written_for_current_file = 0;
 
                     if (file_idx < files.size()) {
-                        fs::path out_path = fs::path(output_path) / fs::path(files[file_idx].name);
+                        fs::path out_path;
                         std::string err;
+                        if (!safe_join_under(output_path, files[file_idx].name, out_path, err)) return {-16, "Unsafe entry name: " + err};
                         if (!ensure_parent_dir(out_path, err)) return {-10, "Failed to create output directories: " + err};
                         current_out.open(out_path, std::ios::binary);
                         if (!current_out.is_open()) return {-11, "Failed to open output file: " + out_path.string()};
@@ -795,7 +869,9 @@ static DecryptResult process_zdb4_v2(
         for (const auto& fe : files) {
             if (fe.name.size() >= 3 && fe.name.rfind(".db") == fe.name.size() - 3) {
                 any_db = true;
-                fs::path p = fs::path(output_path) / fs::path(fe.name);
+                fs::path p;
+                std::string err;
+                if (!safe_join_under(output_path, fe.name, p, err)) continue;
                 if (fs::exists(p) && is_sqlite_db_file(p)) {
                     any_valid_sqlite = true;
                     break;
@@ -1051,26 +1127,40 @@ index_js = "'use strict';\nconst path = require('path');\nconst binding = requir
 with open(f"{BUILD_DIR}/index.js", "w") as f: f.write(index_js)
 
 build_sh = """#!/bin/bash
-set -e
-cd /tmp/db-cross-build
-npm install node-addon-api 2>&1 >/dev/null
+set -euo pipefail
+cd "$(dirname "$0")"
+# Exact pins, never a range and never an implicit "latest".
+#
+# node-addon-api 8.x requires Node >= 18; Electron 43.3.0 embeds Node 24.18.1, so the current
+# 8.x line is the right target. (The old 7.1.1 cap existed only because Electron 22 shipped
+# Node 16, which 8.x dropped.)
+#
+# node-gyp only runs on the build host and does not affect the produced ABI, so it tracks a
+# current release; 12.x is the newest line whose engines accept Node 20.17+/22.9+, while 13.x
+# demands Node ^22.22.2/^24.15.0.
+npm install --no-audit --no-fund node-addon-api@8.9.1 node-gyp@12.4.0 >/dev/null
 # IMPORTANT: don't rely on a system `electron` binary being in PATH (it may be absent or the wrong version).
-# This project is launched with Electron v22.3.27 (see `start.sh`), so build the addon against that ABI.
-npx node-gyp configure --target=22.3.27 --arch=x64 --dist-url=https://www.electronjs.org/headers build 2>&1 >/dev/null
-echo "[*] Success! Binary at: build/Release/db-cross-v4-native.node"
+# This project is launched with Electron v43.3.0 (see `start.sh`), so build the addon against that ABI.
+# --no-install pins us to the node-gyp just installed above instead of letting npx fetch latest.
+npx --no-install node-gyp configure --target=43.3.0 --arch=x64 --dist-url=https://www.electronjs.org/headers build >/dev/null
+echo "[*] Success! Binary at: $(pwd)/build/Release/db-cross-v4-native.node"
 """
 with open(f"{BUILD_DIR}/build.sh", "w") as f: f.write(build_sh)
-os.chmod(f"{BUILD_DIR}/build.sh", 0o755)
+os.chmod(f"{BUILD_DIR}/build.sh", 0o700)
 
 # ===== ADDED BUILD + COPY =====
-import subprocess, shutil
+import subprocess
 
-subprocess.run([f"{BUILD_DIR}/build.sh"], check=True)
+try:
+    subprocess.run(["/bin/bash", f"{BUILD_DIR}/build.sh"], check=True)
 
-src_node = f"{BUILD_DIR}/build/Release/db-cross-v4-native.node"
-dst_dir = "./native/nativelibs/db-cross-v4/prebuilt/linux/electron/x64"
+    src_node = f"{BUILD_DIR}/build/Release/db-cross-v4-native.node"
+    # Resolve relative to this script, not the caller's cwd, so it works from anywhere.
+    dst_dir = os.path.join(REPO_DIR, "native/nativelibs/db-cross-v4/prebuilt/linux/electron/x64")
 
-os.makedirs(dst_dir, exist_ok=True)
-shutil.copy2(src_node, f"{dst_dir}/db-cross-v4-native.node")
+    os.makedirs(dst_dir, exist_ok=True)
+    shutil.copy2(src_node, f"{dst_dir}/db-cross-v4-native.node")
 
-print(f"[*] Copied to: {dst_dir}/db-cross-v4-native.node")
+    print(f"[*] Copied to: {dst_dir}/db-cross-v4-native.node")
+finally:
+    shutil.rmtree(BUILD_DIR, ignore_errors=True)

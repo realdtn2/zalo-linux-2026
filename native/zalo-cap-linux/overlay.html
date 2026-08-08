@@ -1,0 +1,355 @@
+<meta charset="utf-8">
+<title>Zalo Capture</title>
+<style>
+  :root {
+    --accent: #0068ff;
+    --bar-bg: #23262d;
+    --bar-fg: #e7e9ee;
+    --bar-muted: #9aa0ac;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; cursor: crosshair; }
+  #shot { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* The dim layer is painted with a hole punched out for the selection, so the chosen
+     region shows at full brightness while everything else recedes. */
+  #dim { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  #hint {
+    position: absolute; left: 50%; top: 24px; transform: translateX(-50%);
+    background: rgba(20, 22, 27, .88); color: var(--bar-fg);
+    padding: 9px 16px; border-radius: 8px; font: 13px/1.4 system-ui, sans-serif;
+    pointer-events: none; letter-spacing: .2px;
+  }
+  #size {
+    position: absolute; background: rgba(20, 22, 27, .88); color: var(--bar-fg);
+    padding: 3px 8px; border-radius: 5px; font: 12px/1 ui-monospace, monospace;
+    pointer-events: none; display: none;
+  }
+
+  #bar {
+    position: absolute; display: none; align-items: center; gap: 2px;
+    background: var(--bar-bg); border-radius: 10px; padding: 6px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .45); font: 13px system-ui, sans-serif;
+    cursor: default;
+  }
+  #bar button {
+    background: transparent; border: 0; color: var(--bar-fg); cursor: pointer;
+    padding: 7px 9px; border-radius: 7px; font: inherit; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #bar button:hover { background: rgba(255, 255, 255, .1); }
+  #bar button.on { background: var(--accent); color: #fff; }
+  #bar .sep { width: 1px; height: 22px; background: rgba(255, 255, 255, .14); margin: 0 5px; }
+  #bar .act { padding: 7px 14px; font-weight: 600; }
+  #bar .act.primary { background: var(--accent); color: #fff; }
+  #bar .act.primary:hover { background: #0057d9; }
+  #swatches { display: flex; gap: 4px; align-items: center; padding: 0 4px; }
+  .sw { width: 16px; height: 16px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
+  .sw.on { border-color: #fff; }
+
+  #textbox {
+    position: absolute; display: none; background: transparent; border: 1px dashed rgba(255,255,255,.8);
+    color: #f22; font: 600 18px system-ui, sans-serif; padding: 2px 4px; outline: none; min-width: 40px;
+  }
+</style>
+
+<canvas id="shot"></canvas>
+<canvas id="dim"></canvas>
+<canvas id="ink"></canvas>
+<div id="hint">Kéo để chọn vùng · Enter để gửi · Esc để huỷ</div>
+<div id="size"></div>
+<div id="bar"></div>
+<input id="textbox" spellcheck="false">
+
+<script>
+// Supplied by preload.js (contextIsolation on, no node integration in this window).
+const cap = window.capAPI;
+
+const shot = document.getElementById('shot');
+const dim = document.getElementById('dim');
+const ink = document.getElementById('ink');
+const hint = document.getElementById('hint');
+const sizeTag = document.getElementById('size');
+const bar = document.getElementById('bar');
+const textbox = document.getElementById('textbox');
+
+let img = null, W = 0, H = 0, scale = 1, allowSend2Me = false;
+let sel = null;              // {x,y,w,h} in CSS px
+let phase = 'select';        // select -> edit
+let drag = null;
+let tool = 'rect';
+let color = '#f5222d';
+let shapes = [];             // annotation list, CSS-px coordinates
+let drawing = null;
+
+const COLORS = ['#f5222d', '#fa8c16', '#fadb14', '#52c41a', '#0068ff', '#ffffff', '#141414'];
+
+cap.onInit((d) => {
+  W = d.width; H = d.height;
+  allowSend2Me = !!d.enableSend2Me;
+  for (const c of [shot, dim, ink]) { c.width = W; c.height = H; c.style.width = W + 'px'; c.style.height = H + 'px'; }
+  img = new Image();
+  img.onload = () => {
+    scale = img.naturalWidth / W || 1;
+    shot.getContext('2d').drawImage(img, 0, 0, W, H);
+    paintDim();
+  };
+  img.src = d.dataUrl;
+});
+
+function paintDim() {
+  const g = dim.getContext('2d');
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = 'rgba(0,0,0,.45)';
+  g.fillRect(0, 0, W, H);
+  if (sel && sel.w && sel.h) {
+    g.clearRect(sel.x, sel.y, sel.w, sel.h);
+    g.strokeStyle = '#0068ff';
+    g.lineWidth = 1.5;
+    g.strokeRect(sel.x + .75, sel.y + .75, sel.w - 1.5, sel.h - 1.5);
+  }
+}
+
+function norm(a, b) {
+  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
+}
+
+// ------------------------------------------------------------- selection
+
+document.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  if (bar.contains(e.target) || e.target === textbox) return;
+  if (phase === 'select') {
+    drag = { x: e.clientX, y: e.clientY };
+    sel = { x: e.clientX, y: e.clientY, w: 0, h: 0 };
+    hint.style.display = 'none';
+  } else {
+    commitText();
+    drawing = { tool, color, pts: [{ x: e.clientX, y: e.clientY }], a: { x: e.clientX, y: e.clientY }, b: { x: e.clientX, y: e.clientY } };
+  }
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (drag) {
+    sel = norm(drag, { x: e.clientX, y: e.clientY });
+    paintDim();
+    showSize(e);
+  } else if (drawing) {
+    drawing.b = { x: e.clientX, y: e.clientY };
+    if (drawing.tool === 'pen' || drawing.tool === 'mark') drawing.pts.push({ x: e.clientX, y: e.clientY });
+    paintInk();
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  if (drag) {
+    drag = null;
+    sizeTag.style.display = 'none';
+    if (sel && sel.w > 4 && sel.h > 4) { phase = 'edit'; document.body.style.cursor = 'default'; showBar(); }
+    else { sel = null; phase = 'select'; hint.style.display = ''; paintDim(); }
+  } else if (drawing) {
+    if (drawing.tool === 'text') { openText(drawing.a); drawing = null; return; }
+    const moved = Math.abs(drawing.a.x - drawing.b.x) > 2 || Math.abs(drawing.a.y - drawing.b.y) > 2;
+    if (moved) shapes.push(drawing);
+    drawing = null;
+    paintInk();
+  }
+});
+
+function showSize(e) {
+  if (!sel) return;
+  sizeTag.style.display = 'block';
+  sizeTag.textContent = Math.round(sel.w) + ' × ' + Math.round(sel.h);
+  sizeTag.style.left = Math.min(e.clientX + 14, W - 90) + 'px';
+  sizeTag.style.top = Math.max(e.clientY - 26, 4) + 'px';
+}
+
+// ------------------------------------------------------------ annotation
+
+function stroke(g, s) {
+  g.strokeStyle = s.color;
+  g.fillStyle = s.color;
+  g.lineWidth = s.tool === 'mark' ? 14 : 3;
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  g.globalAlpha = s.tool === 'mark' ? .35 : 1;
+
+  const { a, b } = s;
+  if (s.tool === 'rect') {
+    g.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+  } else if (s.tool === 'ellipse') {
+    g.beginPath();
+    g.ellipse((a.x + b.x) / 2, (a.y + b.y) / 2, Math.abs(b.x - a.x) / 2, Math.abs(b.y - a.y) / 2, 0, 0, Math.PI * 2);
+    g.stroke();
+  } else if (s.tool === 'arrow') {
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    const head = Math.max(12, Math.hypot(b.x - a.x, b.y - a.y) * .18);
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+    g.beginPath();
+    g.moveTo(b.x, b.y);
+    g.lineTo(b.x - head * Math.cos(ang - Math.PI / 7), b.y - head * Math.sin(ang - Math.PI / 7));
+    g.lineTo(b.x - head * Math.cos(ang + Math.PI / 7), b.y - head * Math.sin(ang + Math.PI / 7));
+    g.closePath(); g.fill();
+  } else if (s.tool === 'pen' || s.tool === 'mark') {
+    g.beginPath();
+    s.pts.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
+    g.stroke();
+  } else if (s.tool === 'text') {
+    g.font = '600 18px system-ui, sans-serif';
+    g.textBaseline = 'top';
+    g.fillText(s.text, a.x, a.y);
+  }
+  g.globalAlpha = 1;
+}
+
+function paintInk() {
+  const g = ink.getContext('2d');
+  g.clearRect(0, 0, W, H);
+  for (const s of shapes) stroke(g, s);
+  if (drawing) stroke(g, drawing);
+}
+
+function openText(at) {
+  textbox.style.display = 'block';
+  textbox.style.left = at.x + 'px';
+  textbox.style.top = at.y + 'px';
+  textbox.style.color = color;
+  textbox.value = '';
+  textbox.dataset.x = at.x;
+  textbox.dataset.y = at.y;
+  setTimeout(() => textbox.focus(), 0);
+}
+
+function commitText() {
+  if (textbox.style.display !== 'block') return;
+  const v = textbox.value.trim();
+  if (v) shapes.push({ tool: 'text', color: textbox.style.color, text: v, a: { x: +textbox.dataset.x, y: +textbox.dataset.y + 2 }, b: { x: 0, y: 0 }, pts: [] });
+  textbox.style.display = 'none';
+  paintInk();
+}
+
+textbox.addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { commitText(); }
+  else if (e.key === 'Escape') { textbox.style.display = 'none'; }
+});
+
+// ------------------------------------------------------------------ bar
+
+const TOOLS = [
+  ['rect', '▭', 'Khung'],
+  ['ellipse', '◯', 'Elip'],
+  ['arrow', '↗', 'Mũi tên'],
+  ['pen', '✎', 'Bút'],
+  ['mark', '▬', 'Đánh dấu'],
+  ['text', 'T', 'Chữ'],
+];
+
+function showBar() {
+  bar.innerHTML = '';
+  for (const [id, glyph, title] of TOOLS) {
+    const b = document.createElement('button');
+    b.textContent = glyph; b.title = title;
+    b.className = tool === id ? 'on' : '';
+    b.onclick = () => { tool = id; showBar(); };
+    bar.appendChild(b);
+  }
+
+  const sw = document.createElement('div');
+  sw.id = 'swatches';
+  for (const c of COLORS) {
+    const d = document.createElement('div');
+    d.className = 'sw' + (c === color ? ' on' : '');
+    d.style.background = c;
+    d.onclick = () => { color = c; showBar(); };
+    sw.appendChild(d);
+  }
+  bar.append(sepEl(), sw, sepEl());
+
+  const undo = document.createElement('button');
+  undo.textContent = '↶'; undo.title = 'Hoàn tác';
+  undo.onclick = () => { shapes.pop(); paintInk(); };
+  bar.appendChild(undo);
+
+  const redo = document.createElement('button');
+  redo.textContent = '✕'; redo.title = 'Chọn lại vùng';
+  redo.onclick = reselect;
+  bar.appendChild(redo);
+
+  bar.appendChild(sepEl());
+
+  const cancel = document.createElement('button');
+  cancel.className = 'act'; cancel.textContent = 'Huỷ';
+  cancel.onclick = () => cap.cancel();
+  bar.appendChild(cancel);
+
+  const copy = document.createElement('button');
+  copy.className = 'act'; copy.textContent = 'Sao chép';
+  copy.onclick = () => finish('copy');
+  bar.appendChild(copy);
+
+  if (allowSend2Me) {
+    const s2m = document.createElement('button');
+    s2m.className = 'act'; s2m.textContent = 'Gửi cho tôi';
+    s2m.onclick = () => finish('send2me');
+    bar.appendChild(s2m);
+  }
+
+  const send = document.createElement('button');
+  send.className = 'act primary'; send.textContent = 'Gửi';
+  send.onclick = () => finish('accept');
+  bar.appendChild(send);
+
+  bar.style.display = 'flex';
+  // Prefer just under the selection; flip above (or clamp inside) when it would run off.
+  const bw = bar.offsetWidth || 520, bh = bar.offsetHeight || 44;
+  let bx = Math.min(Math.max(sel.x + sel.w - bw, 8), W - bw - 8);
+  let by = sel.y + sel.h + 10;
+  if (by + bh > H - 8) by = Math.max(sel.y - bh - 10, 8);
+  bar.style.left = bx + 'px';
+  bar.style.top = by + 'px';
+}
+
+function sepEl() { const s = document.createElement('div'); s.className = 'sep'; return s; }
+
+function reselect() {
+  phase = 'select'; sel = null; shapes = []; drawing = null;
+  bar.style.display = 'none';
+  textbox.style.display = 'none';
+  document.body.style.cursor = 'crosshair';
+  hint.style.display = '';
+  paintDim(); paintInk();
+}
+
+// --------------------------------------------------------------- export
+
+function finish(action) {
+  commitText();
+  if (!sel || sel.w < 2 || sel.h < 2) return;
+
+  // Export at the display's device resolution so the result is not soft on HiDPI.
+  const out = document.createElement('canvas');
+  out.width = Math.round(sel.w * scale);
+  out.height = Math.round(sel.h * scale);
+  const g = out.getContext('2d');
+  g.drawImage(img,
+    Math.round(sel.x * scale), Math.round(sel.y * scale),
+    Math.round(sel.w * scale), Math.round(sel.h * scale),
+    0, 0, out.width, out.height);
+
+  g.save();
+  g.scale(scale, scale);
+  g.translate(-sel.x, -sel.y);
+  for (const s of shapes) stroke(g, s);
+  g.restore();
+
+  cap.result({ dataUrl: out.toDataURL('image/png'), action });
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') cap.cancel();
+  else if (e.key === 'Enter' && phase === 'edit') finish('accept');
+  else if ((e.ctrlKey || e.metaKey) && e.key === 'z') { shapes.pop(); paintInk(); }
+});
+</script>

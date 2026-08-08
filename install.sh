@@ -10,7 +10,7 @@ ICON_DEST="$HOME/.local/share/icons/zalo.png"
 
 # Files/folders in the current directory that should NOT be installed.
 # Add or remove entries as you like. Use exact names (no paths, no wildcards).
-EXCLUDE_LIST=".git .github .gitignore install.sh reverse-engineering generate-addon.py dist build-appimage.sh README.md COMPREHENSIVE_ANALYSIS.md"
+EXCLUDE_LIST=".git .github .gitignore .remember install.sh reverse-engineering generate-addon.py dist build-appimage.sh build-deb.sh README.md COMPREHENSIVE_ANALYSIS.md CLAUDE.md"
 
 # --- HELPERS ---
 command_exists() { command -v "$1" >/dev/null 2>&1; }

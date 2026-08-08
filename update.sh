@@ -2,14 +2,23 @@
 
 # --- CONFIG ---
 REPO_URL="https://github.com/realdtn2/zalo-linux-2026"
+REPO_BRANCH="latest"
 INSTALL_DIR="$HOME/.local/share/zalo"
-TMP_DIR="/tmp/zalo-update-$$"
-FIFO="/tmp/zalo-update-$$.fifo"
 VERSION_URL="https://raw.githubusercontent.com/realdtn2/zalo-linux-2026/latest/version.txt"
+
+# $$ is trivially predictable and /tmp is world-writable, so another local user could pre-create
+# these paths and win the race against us. mktemp -d gives a 0700 directory with a random name;
+# the FIFO is created inside it, so nobody else can reach it either.
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zalo-update-XXXXXXXX")" || {
+    echo "ERROR: could not create a temporary working directory."
+    exit 1
+}
+TMP_DIR="$WORK_DIR/clone"
+FIFO="$WORK_DIR/progress.fifo"
 
 # --- CLEANUP TRAP ---
 cleanup() {
-    rm -rf "$TMP_DIR" "$FIFO"
+    rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT INT TERM
 
@@ -67,10 +76,19 @@ command_exists curl   || MISSING=1
 command_exists zenity || MISSING=1
 [ "$MISSING" -eq 1 ] && install_dependencies
 
+# Guard version_lt against anything that is not a plain version string: it does numeric
+# comparisons, so a malformed value would make the script die under callers using `set -e`.
+is_valid_version() {
+    [[ "$1" =~ ^v?[0-9]+(\.[0-9]+){0,2}$ ]]
+}
+
 # --- VERSION CHECK ---
 print_step "Checking for updates..."
-REMOTE_VERSION=$(curl -sf --max-time 5 "$VERSION_URL" || echo "unknown")
-LOCAL_VERSION=$(cat "$INSTALL_DIR/version.txt" 2>/dev/null || echo "v0.0.0")
+REMOTE_VERSION=$(curl -sf --max-time 5 "$VERSION_URL" | tr -d '[:space:]' || echo "unknown")
+LOCAL_VERSION=$(tr -d '[:space:]' < "$INSTALL_DIR/version.txt" 2>/dev/null || echo "v0.0.0")
+
+is_valid_version "$REMOTE_VERSION" || REMOTE_VERSION="unknown"
+is_valid_version "$LOCAL_VERSION"  || LOCAL_VERSION="v0.0.0"
 
 echo "  Installed : $LOCAL_VERSION"
 echo "  Latest    : $REMOTE_VERSION"
@@ -96,8 +114,10 @@ mkfifo "$FIFO"
 
 # --- RUN UPDATE IN BACKGROUND, WRITE TO FIFO ---
 (
-    print_step "Fetching latest version from $REPO_URL..."
-    if ! git clone --depth=1 "$REPO_URL" "$TMP_DIR"; then
+    print_step "Fetching latest version from $REPO_URL ($REPO_BRANCH)..."
+    # Pin the branch: the version we compared against comes from `latest`, so the tree we install
+    # must come from `latest` too. Relying on the remote's default branch lets those diverge.
+    if ! git clone --depth=1 --branch "$REPO_BRANCH" "$REPO_URL" "$TMP_DIR"; then
         echo "ERROR: git clone failed."
         exit 1
     fi

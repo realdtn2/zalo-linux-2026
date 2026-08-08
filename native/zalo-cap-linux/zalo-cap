@@ -1,0 +1,24 @@
+#!/bin/bash
+# Launcher shim so the app can spawn this helper exactly the way it spawns the Windows and
+# macOS binaries: one executable path, arguments appended. It re-execs the Electron runtime
+# that is already shipped with Zalo, so the helper adds no dependency of its own.
+set -e
+SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+APP_DIR="$(cd "$SELF_DIR/../.." && pwd)"
+
+# The main process exports its own runtime path before spawning us; the rest are fallbacks
+# for the install.sh layout and for running straight from a checkout.
+CANDIDATES=(
+  "$ZALO_ELECTRON_BIN"
+  "$APP_DIR/electron/electron"
+)
+for d in "$HOME"/.local/electron-*/electron; do CANDIDATES+=("$d"); done
+
+for c in "${CANDIDATES[@]}"; do
+  if [ -n "$c" ] && [ -x "$c" ]; then
+    exec "$c" "$SELF_DIR" "$@"
+  fi
+done
+
+echo "zalo-cap: no Electron runtime found (set ZALO_ELECTRON_BIN)" >&2
+exit 1

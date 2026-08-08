@@ -1,0 +1,6 @@
+{
+  "name": "zalo-cap-linux",
+  "version": "1.0.0",
+  "description": "Linux screen-capture helper for the Zalo Linux port",
+  "main": "main.js"
+}

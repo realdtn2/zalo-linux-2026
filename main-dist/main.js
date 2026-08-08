@@ -39637,7 +39637,10 @@ __ZaBUNDLENAME__ = "main", __SCRIPT_TYPE__ = "main",
                 const e = n("QduZ").spawn;
                 let t = function() {
                     let e = null;
-                    if ("win32" === process.platform) {
+                    if ("linux" === process.platform) {
+                        process.env.ZALO_ELECTRON_BIN = process.execPath;
+                        e = d.join(__dirname, "..", "native", "zalo-cap-linux", "zalo-cap")
+                    } else if ("win32" === process.platform) {
                         const t = "ZaloCap.exe";
                         e = l() ? d.join(__dirname, "..", "native", "qt-call-and-cap", t) : d.join(d.dirname(c.getPath("exe")), "plugins", "capture", t)
                     } else e = l() ? d.join(__dirname, "..", "native", "qt-call-cap-mac", "ZaloHelper.app") : d.join(d.dirname(c.getPath("exe")), "..", "ZaloHelper.app"), e = d.join(e, "Contents", "MacOS", "ZaloCap");
@@ -87554,7 +87557,7 @@ __ZaBUNDLENAME__ = "main", __SCRIPT_TYPE__ = "main",
             n("DIvz");
             class g extends s().EventEmitter {
                 constructor(e, t) {
-                    super(), this.autoDownload = !0, this.autoInstallOnAppQuit = !0, this.allowPrerelease = !1, this.fullChangelog = !1, this.allowDowngrade = !1, this._channel = null, this.downloadedUpdateHelper = null, this.requestHeaders = null, this._logger = console, this.signals = new(E().UpdaterSignal)(this), this._appUpdateConfigPath = null, this.clientPromise = null, this.stagingUserIdPromise = new(l().Lazy)((() => this.getOrCreateStagingUserId())), this.configOnDisk = new(l().Lazy)((() => this.loadUpdateConfig())), this.checkForUpdatesPromise = null, this.updateInfoAndProvider = null, this._testOnlyOptions = null, this.on("error", (e => {
+                    super(), this.autoDownload = !1, this.autoInstallOnAppQuit = !1, this.allowPrerelease = !1, this.fullChangelog = !1, this.allowDowngrade = !1, this._channel = null, this.downloadedUpdateHelper = null, this.requestHeaders = null, this._logger = console, this.signals = new(E().UpdaterSignal)(this), this._appUpdateConfigPath = null, this.clientPromise = null, this.stagingUserIdPromise = new(l().Lazy)((() => this.getOrCreateStagingUserId())), this.configOnDisk = new(l().Lazy)((() => this.loadUpdateConfig())), this.checkForUpdatesPromise = null, this.updateInfoAndProvider = null, this._testOnlyOptions = null, this.on("error", (e => {
                         this._logger.error(`Error: ${e.stack||e.message}`)
                     })), null == t ? (this.app = new(f().ElectronAppAdapter), this.httpExecutor = new(m().ElectronHttpExecutor)(((e, t) => this.emit("login", e, t)))) : (this.app = t, this.httpExecutor = null), this.untilAppReady = Promise.resolve();
                     const n = this.app.version,
@@ -110524,7 +110527,7 @@ __ZaBUNDLENAME__ = "main", __SCRIPT_TYPE__ = "main",
             function bn() {
                 gn();
                 let e = le();
-                Dt && ue() ? (je = !0, pn("new_install", null, null, "distribution")) : je = !1, Ae && Ae.webContents && !Ae.isDestroyed() && Ae.webContents.incrementCapturerCount(), Ae.webContents.on("did-finish-load", (() => {
+                Dt && ue() ? (je = !0, pn("new_install", null, null, "distribution")) : je = !1, Ae && Ae.webContents && !Ae.isDestroyed() && Ae.webContents.incrementCapturerCount && Ae.webContents.incrementCapturerCount(), Ae.webContents.on("did-finish-load", (() => {
                     perf.record(perf.MAIN_WINDOW_LOADED), D.recordEvent(N.main_window_finish_load), m.closeAllChild(), B.close()
                 })).on("did-start-loading", (() => {
                     perf.record(perf.MAIN_WINDOW_LOADING), Ae.webContents.send(Y)
