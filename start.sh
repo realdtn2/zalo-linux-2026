@@ -6,7 +6,7 @@ ELECTRON_VERSION="v43.3.0"
 ELECTRON_DIR="$HOME/.local/electron-$ELECTRON_VERSION"
 ELECTRON_BIN="$ELECTRON_DIR/electron"
 DOWNLOAD_URL="https://github.com/electron/electron/releases/download/$ELECTRON_VERSION/electron-$ELECTRON_VERSION-linux-x64.zip"
-# Pinned SHA-256 of electron-v43.3.0-linux-x64.zip, taken from the release's SHASUMS256.txt.
+# Pinned SHA-256 of electron-v22.3.27-linux-x64.zip, taken from the release's SHASUMS256.txt.
 # Pinning (rather than just fetching the sums file) means a replaced release asset is caught too.
 ELECTRON_SHA256="f4987e9f045e46b117f0805d6ba4dc524e2abb2c2e33660f175bb39564bd3dae"
 VERSION_URL="https://raw.githubusercontent.com/realdtn2/zalo-linux-2026/latest/version.txt"
@@ -147,8 +147,15 @@ fi
 # systems where it works fine (verified working on Ubuntu 24.04+ / 26.04).
 echo "[*] Launching with Electron $ELECTRON_VERSION..."
 
+# Electron 22 always ran through XWayland; Electron 29+ picks native Wayland on a Wayland
+# session. This bundle is a macOS build that has only ever been exercised under X11, and
+# native Wayland breaks things that used to work — notably globalShortcut, which then has to
+# go through the xdg GlobalShortcuts portal ("Failed to call BindShortcuts"). Pin X11 to keep
+# the environment the app was working in; override with ZALO_OZONE_PLATFORM=wayland to test.
+OZONE="${ZALO_OZONE_PLATFORM:-x11}"
+
 run_electron() {
-    ELECTRON_ENABLE_LOGGING=1 "$ELECTRON_BIN" "$@" "$INSTALL_DIR"
+    ELECTRON_ENABLE_LOGGING=1 "$ELECTRON_BIN" --ozone-platform="$OZONE" "$@" "$INSTALL_DIR"
 }
 
 if [ "${ZALO_NO_SANDBOX:-0}" = "1" ]; then

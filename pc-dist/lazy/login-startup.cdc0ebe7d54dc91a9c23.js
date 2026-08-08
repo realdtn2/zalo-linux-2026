@@ -1362,7 +1362,7 @@
                     })() : await (async () => {
                         try {
                             const i = r ? "password" : "old QR";
-                            nr.zsymb(0, "qAKP7V", `Login without trust (entry: ${i})`), null != e && e.uid && await j(e.uid) && nr.zsymb(6, "rBxVfn", "Trust Identity has gone into dormancy mode")
+                            nr.zsymb(0, "qAKP7V", `Login without trust (entry: ${i})`), null != e && e.uid && await Promise.race([j(e.uid), new Promise((__res) => setTimeout(() => __res(false), 5e3))]) && nr.zsymb(6, "rBxVfn", "Trust Identity has gone into dormancy mode")
                         } catch (i) {}
                     })()
                 } catch (s) {

@@ -1131,7 +1131,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 # Exact pins, never a range and never an implicit "latest".
 #
-# node-addon-api 8.x requires Node >= 18; Electron 43.3.0 embeds Node 24.18.1, so the current
+# node-addon-api 8.x dropped Node 16; Electron 22.3.27 embeds Node 16.17.1, so the current
 # 8.x line is the right target. (The old 7.1.1 cap existed only because Electron 22 shipped
 # Node 16, which 8.x dropped.)
 #

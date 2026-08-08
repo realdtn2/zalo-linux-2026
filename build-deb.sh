@@ -120,8 +120,15 @@ set -e
 APP_DIR="$INSTALL_PREFIX"
 ELECTRON_BIN="\$APP_DIR/electron/electron"
 
+# Electron 22 always ran through XWayland; Electron 29+ picks native Wayland on a Wayland
+# session. This bundle is a macOS build that has only ever been exercised under X11, and
+# native Wayland breaks things that used to work — notably globalShortcut, which then has to
+# go through the xdg GlobalShortcuts portal ("Failed to call BindShortcuts"). Pin X11 to keep
+# the environment the app was working in; override with ZALO_OZONE_PLATFORM=wayland to test.
+OZONE="\${ZALO_OZONE_PLATFORM:-x11}"
+
 run_electron() {
-    ELECTRON_ENABLE_LOGGING=1 "\$ELECTRON_BIN" "\$@" "\$APP_DIR"
+    ELECTRON_ENABLE_LOGGING=1 "\$ELECTRON_BIN" --ozone-platform="\$OZONE" "\$@" "\$APP_DIR"
 }
 
 if [ "\${ZALO_NO_SANDBOX:-0}" = "1" ]; then
@@ -197,6 +204,18 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -q -f /usr/share/icons/hicolor || true
+fi
+
+# dpkg replaces files on disk but never touches running processes, and killing someone's
+# messenger mid-conversation during an upgrade would be worse than the stale build. Say so
+# instead: an already-running Zalo keeps executing the code it loaded at startup, so new
+# features (and fixes) only appear after it is restarted.
+if pgrep -f "$INSTALL_PREFIX/electron/electron" >/dev/null 2>&1; then
+    echo ""
+    echo "  NOTE: Zalo is currently running and is still using the previously installed"
+    echo "        version. Quit it fully (tray icon -> Quit) and start it again to pick"
+    echo "        up this update."
+    echo ""
 fi
 exit 0
 POST

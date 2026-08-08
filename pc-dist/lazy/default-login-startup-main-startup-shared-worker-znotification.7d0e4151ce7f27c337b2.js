@@ -1739,8 +1739,13 @@
                 se = !0;
                 const e = e => {
                     if (e.source === window && function(e) {
+                            // Chromium gives file:// documents an opaque origin, so a same-window
+                            // postMessage arrives as origin "null" rather than "file://". This check
+                            // used to drop the transferred MessagePort, so the DAL channel never
+                            // opened and every SQLite-backed read hung forever. e.source === window
+                            // (checked above) is the real guard; only relax it for a file: document.
                             const E = "file://";
-                            return e === E
+                            return e === E || (e === "null" && location.protocol === "file:")
                         }(e.origin) && e.data) {
                         const {
                             zChannelId: E,

@@ -1,3 +1,33 @@
+/* Electron 43 / Node 24 compatibility -----------------------------------------------------
+ * Node 24 validates cipher keys with brand checks that reject a TypedArray created in another
+ * realm, which is exactly what reaches this preload across the contextBridge. Node 16
+ * (Electron 22) accepted it, so on 43 the login payload failed to decrypt and the error was
+ * swallowed by the app's own try/catch — the app sat on the QR screen forever with no error.
+ * Observed as: TypeError: Value of "this" must be of type KeyObject
+ *              (getKeyObjectSlots <- isKeyObject <- prepareSecretKey <- createCipherWithIV)
+ * Copy key/iv into Buffers owned by this realm, once, at the crypto module level so every
+ * call site is covered.
+ */
+globalThis.__zbuf = globalThis.__zbuf || function (v) {
+    if (v == null || typeof v === 'string' || Buffer.isBuffer(v)) return v;
+    try { if (ArrayBuffer.isView(v)) return Buffer.from(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)); } catch (_) {}
+    try { if (Object.prototype.toString.call(v) === '[object ArrayBuffer]') return Buffer.from(new Uint8Array(v)); } catch (_) {}
+    try { if (typeof v === 'object' && typeof v.length === 'number') return Buffer.from(Array.prototype.slice.call(v)); } catch (_) {}
+    return v;
+};
+try {
+    const __zc = require('crypto');
+    for (const __fn of ['createCipheriv', 'createDecipheriv']) {
+        const __orig = __zc[__fn];
+        if (typeof __orig !== 'function' || __orig.__zPatched) continue;
+        const __wrapped = function (algo, key, iv, opts) {
+            return __orig.call(this, algo, globalThis.__zbuf(key), globalThis.__zbuf(iv), opts);
+        };
+        __wrapped.__zPatched = true;
+        __zc[__fn] = __wrapped;
+    }
+} catch (_) {}
+/* ---------------------------------------------------------------------------------------- */
 // CLIPBOARD IMAGE PASTE FIX
 // Cleanup old temp files on startup
 try {
@@ -2121,10 +2151,24 @@ __ZaBUNDLENAME__ = "preload-render", __SCRIPT_TYPE__ = "preload",
                 return a.transformParams = i.bind(n), a.transformResult = i.bind(r), a
             }
 
+            // Node 24 (Electron 43) validates cipher keys with brand checks that reject a
+            // TypedArray created in another realm — which is what arrives here across the
+            // contextBridge. Node 16 (Electron 22) accepted it, so login silently failed with
+            // "Value of \"this\" must be of type KeyObject". Copy into a Buffer owned by this
+            // realm before handing it to crypto.
+            const __unused_zbuf = function (v) {
+                if (v == null || typeof v === 'string' || Buffer.isBuffer(v)) return v;
+                try { if (ArrayBuffer.isView(v)) return Buffer.from(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)); } catch (_) {}
+                try { if (Object.prototype.toString.call(v) === '[object ArrayBuffer]') return Buffer.from(new Uint8Array(v)); } catch (_) {}
+                try { if (typeof v === 'object' && typeof v.length === 'number') return Buffer.from(Array.prototype.slice.call(v)); } catch (_) {}
+                return v;
+            };
+            const __zbuf = globalThis.__zbuf;
+
             function v(e, t, n, r, a) {
                 var i;
                 t = t || "aes-256-gcm", r = r || _.a.randomBytes(16), n = n || _.a.randomBytes(32);
-                const o = "cipher" === e ? _.a.createCipheriv(t, n, r, a) : _.a.createDecipheriv(t, n, r, a);
+                const o = "cipher" === e ? _.a.createCipheriv(t, __zbuf(n), __zbuf(r), a) : _.a.createDecipheriv(t, __zbuf(n), __zbuf(r), a);
                 return {
                     update: E(o.update, o).transformParams(y).transformResult(g),
                     final: E((function() {
@@ -2140,7 +2184,7 @@ __ZaBUNDLENAME__ = "preload-render", __SCRIPT_TYPE__ = "preload",
             }
 
             function A(e, t, n, r, a = Buffer.from("0".repeat(32), "hex"), i, o) {
-                const s = "decrypt" === e ? _.a.createDecipheriv(n, null != i && i.key && "string" == typeof r ? Buffer.from(r, i.key) : r, null != i && i.iv && "string" == typeof a ? Buffer.from(a, i.key) : a, o) : _.a.createCipheriv(n, null != i && i.key && "string" == typeof r ? Buffer.from(r, i.key) : r, null != i && i.iv && "string" == typeof a ? Buffer.from(a, i.key) : a, o),
+                const s = "decrypt" === e ? _.a.createDecipheriv(n, __zbuf(null != i && i.key && "string" == typeof r ? Buffer.from(r, i.key) : r), __zbuf(null != i && i.iv && "string" == typeof a ? Buffer.from(a, i.key) : a), o) : _.a.createCipheriv(n, __zbuf(null != i && i.key && "string" == typeof r ? Buffer.from(r, i.key) : r), __zbuf(null != i && i.iv && "string" == typeof a ? Buffer.from(a, i.key) : a), o),
                     c = Buffer.concat(["string" == typeof t && null != i && i.input ? s.update(t, null == i ? void 0 : i.input) : s.update(t), s.final()]);
                 return void 0 !== (null == i ? void 0 : i.output) ? c.toString(i.output) : c.buffer
             }
@@ -16952,7 +16996,7 @@ __ZaBUNDLENAME__ = "preload-render", __SCRIPT_TYPE__ = "preload",
                     })(Object(r.getZaloDirSync)(), this._config.db_name.replace("$0$", this._config.userId)), this._dbPath && (this._adapter = new c(this._dbPath), this._db = new u(this._adapter), this._encryptor = ((e = this._config.userId).length < 32 && (e = e.padEnd(32, "0")), e.length > 32 && (e = e.slice(0, 32)), {
                         encrypt: t => {
                             try {
-                                let n = m.a.createCipheriv("aes-256-cbc", e, _),
+                                let n = m.a.createCipheriv("aes-256-cbc", __zbuf(e), __zbuf(_)),
                                     r = n.update(t, "hex", "utf8");
                                 return r += n.final("utf8"), r
                             } catch (n) {}
@@ -16960,7 +17004,7 @@ __ZaBUNDLENAME__ = "preload-render", __SCRIPT_TYPE__ = "preload",
                     }), this._decryptor = (e => (e.length < 32 && (e = e.padEnd(32, "0")), e.length > 32 && (e = e.slice(0, 32)), {
                         decrypt: t => {
                             try {
-                                let n = m.a.createDecipheriv("aes-256-cbc", e, _);
+                                let n = m.a.createDecipheriv("aes-256-cbc", __zbuf(e), __zbuf(_));
                                 return n.update(t, "hex", "utf8") + n.final("utf8")
                             } catch (n) {}
                         }
@@ -28678,7 +28722,7 @@ __ZaBUNDLENAME__ = "preload-render", __SCRIPT_TYPE__ = "preload",
                 }
                 static getCipher(e) {
                     const t = z.getCipherKey(e);
-                    return T.a.createCipheriv("aes-256-cbc", t, z.getFormattedIv(e))
+                    return T.a.createCipheriv("aes-256-cbc", __zbuf(t), __zbuf(z.getFormattedIv(e)))
                 }
                 static getDecipherV1(e) {
                     const t = z.getCipherKey(e);
@@ -28686,7 +28730,7 @@ __ZaBUNDLENAME__ = "preload-render", __SCRIPT_TYPE__ = "preload",
                 }
                 static getDecipherV2(e) {
                     const t = z.getCipherKey(e);
-                    return T.a.createDecipheriv("aes-256-cbc", t, z.getFormattedIv(e))
+                    return T.a.createDecipheriv("aes-256-cbc", __zbuf(t), __zbuf(z.getFormattedIv(e)))
                 }
                 static getFormattedIv(e) {
                     const t = "zie" + e.slice(0, 13);

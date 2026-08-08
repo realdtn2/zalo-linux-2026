@@ -66,9 +66,25 @@ function send(cmd, data) {
     flush();
 }
 
+// stdout carries the protocol, so diagnostics go to stderr *and* to a file — the app is
+// normally launched from a desktop entry where stderr is not visible anywhere.
+const LOG_FILE = (() => {
+    try {
+        const os = require('os');
+        const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+        return path.join(base, 'ZaloData', 'zalo-cap.log');
+    } catch (_) { return null; }
+})();
+
 function log(...args) {
-    // stdout carries the protocol; anything diagnostic has to go to stderr.
-    try { process.stderr.write('[zalo-cap] ' + args.join(' ') + '\n'); } catch (_) {}
+    const line = '[' + new Date().toISOString() + '] ' + args.join(' ') + '\n';
+    try { process.stderr.write('[zalo-cap] ' + line); } catch (_) {}
+    if (!LOG_FILE) return;
+    try {
+        const fs = require('fs');
+        fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+        fs.appendFileSync(LOG_FILE, line);
+    } catch (_) {}
 }
 
 // ---------------------------------------------------------------- capture
@@ -260,6 +276,10 @@ ipcMain.on('cap-result', (_e, payload) => {
         if (payload.action === 'send2me') send(OUT_SEND2ME, '');
         else if (payload.action === 'save') send(OUT_SAVE, '');
         else send(OUT_ACCEPT, '');
+        // acceptScrs/send2meScrs do NOT clear the app's state machine — only cancelScrs and
+        // quitAction reset it from BUSY back to READY. Without this the next screenshot is
+        // silently swallowed by the `if (C == BUSY) return` guard in startScreenshot.
+        send(OUT_QUIT, '');
     } catch (err) {
         log('failed to publish capture:', err && err.message);
         send(OUT_CANCEL, '');
@@ -276,6 +296,9 @@ ipcMain.on('cap-cancel', () => {
 // -------------------------------------------------------------- protocol
 
 function handle(cmd, data) {
+    // Logged unconditionally: if the button "does nothing", the first thing to establish is
+    // whether the request ever reaches this process at all.
+    if (cmd !== CMD_RECV_ACK) log('<- ' + cmd + ' ' + JSON.stringify(data || ''));
     switch (cmd) {
         case CMD_CAPTURE:
             startCapture(data);
@@ -339,7 +362,16 @@ app.disableHardwareAcceleration();
 app.whenReady().then(() => {
     readStdin();
     send(OUT_INIT_SUCCESS, '');
-    log('ready');
+    // Stamp the build so the log identifies which version is actually *running* — an app
+    // left open across an upgrade keeps executing the code it loaded at startup, and that
+    // is indistinguishable from a broken build unless the version is recorded here.
+    let version = 'unknown';
+    try {
+        version = require('fs')
+            .readFileSync(path.join(__dirname, '..', '..', 'version.txt'), 'utf8')
+            .trim();
+    } catch (_) {}
+    log('ready (zalo ' + version + ', electron ' + process.versions.electron + ')');
 });
 
 // The helper is a background service for the main app: no windows must not quit it.
