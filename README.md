@@ -66,12 +66,15 @@ Requires: `wget`, `unzip`
 
 ### `zcall` (Audio & Video Calling)
 
-**Status:** ❌ Unported (Stubbed)
+**Status:** ❌ Unported (Stubbed — degrades gracefully)
 
 **Description:**  
 A massive proprietary VoIP and WebRTC stack built around custom ZRTP-based encryption. Implemented through `zcall_mac.node` and responsible for all voice and video calling functionality.
+**State:**
+`zcall_mac.node` is a Mach-O binary and cannot run on Linux. Call **signalling/ringing** (WebSocket `voicecall/*`) is pure JS and fully working. The Linux binding routes to a contract stub (device enumeration returns the native JSON-string contract; call setup rejects through the same path a macOS config-fetch failure uses), and `native/qt-call-cap-linux/` ships a real call-v2 **wire-protocol bridge**: a Node agent + POSIX launcher that speaks the actual two-socket `$`-framed AES protocol (chunking, per-frame ACK, `native-ready`, `listDevice`, `update`, deterministic `sendSignal 401` end, `killMe` discipline), verified against a host emulator under both Node 22 and Electron 22's Node 16 (`node native/qt-call-cap-linux/test-wire.js`). **Media (voice/video I/O) still requires VNG's proprietary ZRTP-variant stack and is not implemented** — the bridge fails calls fast and correctly instead of hanging. Binary analysis + rationale: `recon-zcall-protocol.md`; protocol invariants: `CALL-LINUX.md`; contract regression: `native/nativelibs/zcall/test-linux.js`.
 
 ---
+
 
 ### `db-cross-v4` (Backup Decryption Engine)
 
@@ -87,74 +90,73 @@ Fully reverse-engineered and reimplemented in C++. The Linux replacement is comp
 
 ### `zjxl` (JPEG-XL Codec Support)
 
-**Status:** ❌ Unported
+**Status:** ✅ Ported
 
 **Description:**  
-Responsible for decoding JPEG-XL image files. Depends on a large bundled ecosystem of macOS-specific dynamic libraries, including OpenCV, `highway`, and `brotli`.
+Replaces the macOS binary with a Linux x64 NAPI addon (`build/linux_x64/jxl.node`) built against libjxl 0.11. All runtime dependencies (libjxl, brotli, highway, libjpeg, lcms2) are bundled next to the addon with `$ORIGIN` RUNPATH, so no system packages are required. Full API parity: `decodeToJpeg`, `bitmapToJxl`, `getJxlInfo`, `resizeJxl`, `resizeJxlLimit`, `jxlDecompressMulti`, `moduleReady`.
 
 ---
 
 ### `zimage` (Advanced Image Processing)
 
-**Status:** ❌ Unported
+**Status:** ✅ Ported
 
 **Description:**  
-Performs computationally intensive image operations such as thumbnail generation, resizing, and image transformations using the bundled `libvips-cpp` library.
+Pure-JS port of the thumbnail pipeline: prefers Electron `nativeImage` (zero dependencies, always available in the main process), falls back to `sharp` if the app ever bundles it, then to the system `vips thumbnail` CLI. Matches the macOS semantics consumers use (`Image.thumbnail` / `resizeQA`, fit-inside, JPEG quality, alpha flattened onto white).
 
 ---
 
 ### `mp4thumb` (Video Thumbnail Generation)
 
-**Status:** ❌ Unported
+**Status:** ✅ Ported
 
 **Description:**  
-Generates image thumbnails from `.mp4` attachments. Functions as a native macOS wrapper around a statically linked FFmpeg component that extracts preview frames.
+Spawns ffmpeg (`ZALO_FFMPEG` override → Electron's bundled ffmpeg → `PATH`) to extract one scaled frame, mirroring the static-FFmpeg macOS wrapper. When no ffmpeg binary exists the port rejects with the same `{ error: 'LIB_ERR' }` shape the loader fallback already produced, so callers are unaffected.
 
 ---
 
 ### `file-utilities` (Fast Directory Sizing)
 
-**Status:** ❌ Unported (Throws Error)
+**Status:** ✅ Ported
 
 **Description:**  
-A Rust-based NAPI-RS module used for high-performance recursive directory size calculations.
+Rust NAPI-RS module rebuilt for Linux x64 (`linux-x64/file-utilities.node`, sources under `native/`). Exposes the full surface: `getDirectorySize(Async|Sync)`, `detectHardlinks(Async|Sync)`, `detectFilesystem(Async|Sync)`, `getDirectorySizeByGlob(Async|Sync)`.
 
 ---
 
 ### `zwalker` (Recursive Directory Scanner)
 
-**Status:** ❌ Unported (Stubbed)
+**Status:** ✅ Ported
 
 **Description:**  
-Traverses the filesystem to locate files, index content, and discover backups.
+Pure-JS reimplementation of the napi-rs crawler: `scanDirectory`, `updateReferenceMessageId`, `deleteHomelessFiles` (conservative/aggressive), `statUnmarkedFiles`, `deleteEmptyFolders`. Parity-tested against the macOS binary's observed semantics (`.zwalker.json` marker format, atime buckets, homeless math, error codes 1016/1017).
 
 ---
 
 ### `file-utils` (Low-Level File System Utilities)
 
-**Status:** ❌ Unported (Returns "not support")
+**Status:** ✅ Ported
 
 **Description:**  
-Provides native wrappers around common filesystem operations such as moving, copying, and manipulating files.
+Pure-JS port: `moveFileToTrash` (FreeDesktop.org Trash spec — files/info layout, collision renaming, `.trashinfo`), `copyFileSync`, `ensureDirSync`, `isFileExecutable`. No "not support" fallback on Linux anymore.
 
 ---
 
 ### `v8-profiles` (CPU Profiling)
 
-**Status:** ❌ Unported
+**Status:** ✅ Ported
 
 **Description:**  
-A macOS-specific profiling module used to analyze V8 JavaScript engine performance.
+Pure-JS shim over Node's core `inspector` module (V8 `Profiler.start/stop/setSamplingInterval`). Provides the same `profiles` map, `startProfiling`/`stopProfiling`/`setSamplingInterval`/`deleteAllProfiles` surface as the macOS profiler addon.
 
 ---
 
 ### `zfile` (Disk Information)
 
-**Status:** ❌ Unported (Stubbed)
+**Status:** ✅ Ported
 
 **Description:**  
-Retrieves disk usage statistics, storage capacity information, and available free space.
-
+Pure-JS port: `stat`/`statFolder` (size, fileCount, mtime), `diskInfo()` keyed by mount point (statvfs/df), `copyFolder`/`cancelCopy` (cancellable recursive copy), `canRead`/`canWrite`/`canReadAndWrite`.
 ---
 
 ### `sqlite3` (Local Database Engine)

@@ -46,6 +46,11 @@ function getLib(options) {
 
     const getLibInstance = () => {
         return new Promise((resolve, reject) => {
+            if (process.platform === 'linux') {
+                // Pure-JS port (nativeImage / sharp / vips CLI) — see ./linux.js
+                require('./linux.js')(options).then(resolve, reject);
+                return;
+            }
             if (!os) {
                 reject({
                     error: NOT_SUPPORT

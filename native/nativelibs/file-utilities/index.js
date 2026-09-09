@@ -39,6 +39,13 @@ function getPlatformPath() {
                 default:
                     throw new Error(`Unsupported architecture on macOS: ${arch}`)
             }
+        case 'linux':
+            switch (arch) {
+                case 'x64':
+                    return join(__dirname, 'linux-x64', 'file-utilities.node')
+                default:
+                    throw new Error(`Unsupported architecture on Linux: ${arch}`)
+            }
         default:
             throw new Error(`Unsupported OS: ${platform}, architecture: ${arch}`)
     }

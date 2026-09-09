@@ -5,3 +5,7 @@ unnamed_addrs.txt
 ghidrecomp
 reverse-engineering
 *run_zcall_re.sh
+
+# local build/test scratch
+node_modules/
+native/nativelibs/file-utilities/native/target/

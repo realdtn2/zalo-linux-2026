@@ -6,6 +6,9 @@ function getLib() {
     } else if (process.platform === 'darwin') {
         if (process.arch === 'arm64') nodeAddon = require('./build/darwin_arm64/jxl.node');
         else nodeAddon = require('./build/darwin_x64/jxl.node');
+    } else if (process.platform === 'linux') {
+        if (process.arch !== 'x64') return { error: 'not support' };
+        nodeAddon = require('./build/linux_x64/jxl.node');
     } else {
         return {
             error: 'not support'

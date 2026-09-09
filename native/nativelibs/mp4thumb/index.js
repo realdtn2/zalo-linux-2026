@@ -5,13 +5,14 @@ function getLib() {
     try {
         if (process.platform === 'win32') {
             thumbModule = require(`./win32/${process.arch}/mp4thumb.node`);
+        } else if (process.platform === 'linux') {
+            // ffmpeg-CLI port (spawns ffmpeg/avconv; LIB_ERR-shaped reject when absent)
+            thumbModule = require('./linux.js');
+        } else if (process.arch === 'arm64') {
+            // thumbModule = require('./darwin-arm64/mp4thumb.node');
+            thumbModule = require('./darwin-arm64/mp4thumb.node');
         } else {
-            if (process.arch === 'arm64') {
-                // thumbModule = require('./darwin-arm64/mp4thumb.node');
-                thumbModule = require('./darwin-arm64/mp4thumb.node');
-            } else {
-                thumbModule = require('./darwin-x64/mp4thumb.node');
-            }
+            thumbModule = require('./darwin-x64/mp4thumb.node');
         }
     } catch (e) {
         console.error(`Failed to load mp4thumb module: ${e.message}`);

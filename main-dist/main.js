@@ -10844,7 +10844,7 @@ __ZaBUNDLENAME__ = "main", __SCRIPT_TYPE__ = "main",
                 I = !0, B(T.DO_LOAD);
                 const e = function() {
                     let e = null;
-                    return "win32" === process.platform ? e = l() ? o.join(__dirname, "..", "native", "qt-call-and-cap", "ZaloCall.exe") : o.join(o.dirname(i.getPath("exe")), "plugins", "capture", "ZaloCall.exe") : (e = l() ? o.join(__dirname, "..", "native", "qt-call-cap-mac", "ZaloHelper.app") : o.join(o.dirname(i.getPath("exe")), "..", "ZaloHelper.app"), e = o.join(e, "Contents", "MacOS", "ZaloCall")), e
+                    return "linux" === process.platform ? e = [o.join(__dirname, "..", "native", "qt-call-cap-linux", "ZaloCall"), o.join(o.dirname(i.getPath("exe")), "..", "native", "qt-call-cap-linux", "ZaloCall")].find((s => n("mw/K").existsSync(s))) || o.join(__dirname, "..", "native", "qt-call-cap-linux", "ZaloCall") : "win32" === process.platform ? e = l() ? o.join(__dirname, "..", "native", "qt-call-and-cap", "ZaloCall.exe") : o.join(o.dirname(i.getPath("exe")), "plugins", "capture", "ZaloCall.exe") : (e = l() ? o.join(__dirname, "..", "native", "qt-call-cap-mac", "ZaloHelper.app") : o.join(o.dirname(i.getPath("exe")), "..", "ZaloHelper.app"), e = o.join(e, "Contents", "MacOS", "ZaloCall")), e
                 }();
                 p(e, u).then((t => {
                     if (b && !t) return I = !1, B(T.DID_LOAD_FAIL), void d.zsymb(22, "W1Xbv1", ["invalid call", "f2OcQI"]);
@@ -39640,7 +39640,7 @@ __ZaBUNDLENAME__ = "main", __SCRIPT_TYPE__ = "main",
                     if ("win32" === process.platform) {
                         const t = "ZaloCap.exe";
                         e = l() ? d.join(__dirname, "..", "native", "qt-call-and-cap", t) : d.join(d.dirname(c.getPath("exe")), "plugins", "capture", t)
-                    } else e = l() ? d.join(__dirname, "..", "native", "qt-call-cap-mac", "ZaloHelper.app") : d.join(d.dirname(c.getPath("exe")), "..", "ZaloHelper.app"), e = d.join(e, "Contents", "MacOS", "ZaloCap");
+                    } else if ("linux" === process.platform) e = d.join(__dirname, "..", "native", "qt-call-cap-linux", "ZaloCap"); else e = l() ? d.join(__dirname, "..", "native", "qt-call-cap-mac", "ZaloHelper.app") : d.join(d.dirname(c.getPath("exe")), "..", "ZaloHelper.app"), e = d.join(e, "Contents", "MacOS", "ZaloCap");
                     return e
                 }();
                 o.zsymb(15, "uT2BGJ", ["start app", "x3ncBP"], t), C = _.STARTED;

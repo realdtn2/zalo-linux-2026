@@ -9,6 +9,9 @@ function getLib() {
         } else {
             return require('./darwin/file-utils.node');
         }
+    } else if (process.platform === 'linux') {
+        // Pure-JS port (XDG trash / copy / ensureDir / exec-bit) — see ./linux.js
+        return require('./linux.js');
     } else {
         return {
             error: 'not support'

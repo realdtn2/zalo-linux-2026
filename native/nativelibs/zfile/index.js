@@ -7,6 +7,9 @@ function getLib() {
         } else {
             addon = require('./win32/addon');
         }
+    } else if (process.platform === 'linux') {
+        // Pure-JS Linux port (no native addon needed) — see ./linux.js
+        return require('./linux.js');
     } else {
         return {
             stat: () => {},

@@ -1,0 +1,24 @@
+[package]
+name = "file-utilities"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+name = "file_utilities"
+
+[dependencies]
+napi = { version = "2", features = ["napi6"] }
+napi-derive = "2"
+globset = "0.4"
+libc = "0.2"
+parking_lot = "0.12"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1

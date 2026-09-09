@@ -1,0 +1,38 @@
+#!/bin/sh
+# ZaloCall (Linux) — launcher for the Zalo call-v2 bridge agent.
+#
+# main.js spawn()s this path as [helper, <recvSocket>, <sendSocket>] in the
+# same way it spawns ZaloHelper.app/Contents/MacOS/ZaloCall on macOS. The
+# protocol lives in zcall-agent.js.
+#
+# We resolve a Node-capable runtime without assuming a system node:
+#   1) The spawning process IS the Electron main process; /proc/PPID/exe
+#      points at the electron binary, and ELECTRON_RUN_AS_NODE=1 turns it
+#      into plain Node (same trick main.js itself uses for its workers).
+#   2) Sibling bundled electron (dev dir and AppImage both place native/ and
+#      electron/ under the same parent).
+#   3) System node/electron as last resort.
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+NODE=""
+if [ -n "$PPID" ] && [ -e "/proc/$PPID/exe" ]; then
+    CAND=$(readlink -f "/proc/$PPID/exe" 2>/dev/null) || CAND=""
+    [ -n "$CAND" ] && [ -x "$CAND" ] && NODE="$CAND"
+fi
+if [ -z "$NODE" ] && [ -x "$DIR/../../electron/electron" ]; then
+    NODE="$DIR/../../electron/electron"
+fi
+if [ -z "$NODE" ]; then
+    for c in node nodejs electron; do
+        if command -v "$c" >/dev/null 2>&1; then
+            NODE=$(command -v "$c")
+            break
+        fi
+    done
+fi
+if [ -z "$NODE" ]; then
+    echo "[ZaloCall] no node-capable runtime found; call bridge disabled" >&2
+    exit 3
+fi
+
+exec env ELECTRON_RUN_AS_NODE=1 "$NODE" "$DIR/zcall-agent.js" "$@"
